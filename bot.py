@@ -329,63 +329,6 @@ def dynamic_countdown(seconds):
     print()
 
 def process_sessions(file, execute_tasks, retry=False):
-    sessions = read_sessions(file)
-    if not sessions:
-        log("No sessions to process.", "ERROR")
-        return
-    
-    total_wait_times = []
-    for idx, session in enumerate(sessions):
-        log(f"Processing session: Token {Fore.CYAN}{idx + 1}{Style.RESET_ALL}", "INFO")
-        token = login(session)
-        if not token:
-            log(f"Skipping session Token {idx + 1} due to login failure.", "WARNING")
-            continue
-
-        check_in(token)
-        balance = check_balance(token)
-        log(f"Current balance for Token {Fore.CYAN}{idx + 1}{Style.RESET_ALL}: {Fore.GREEN}{balance} HOLD{Style.RESET_ALL}", "INFO")
-        state = get_diamond_state(token)
-        
-        if state.get("state") == "available":
-            diamond_num = state.get("diamondNumber")
-            log(f"Diamond {Fore.MAGENTA}{diamond_num}{Style.RESET_ALL} available for Token {idx + 1}, completing...", "INFO")
-            complete_res = complete_diamond(token, diamond_num)
-            log("Complete response received.", "INFO")
-            log("Starting farming...", "INFO")
-            farm_wait_time = farm(token)
-            if farm_wait_time:
-                total_wait_times.append(farm_wait_time)
-        else:
-            log(f"Diamond not available for Token {idx + 1}, moving to next session.", "WARNING")
-            next_at = state.get("timings", {}).get("nextAt")
-            if next_at:
-                next_time = to_utc(next_at / 1000)
-                log(f"Next diamond check for Token {idx + 1} at: {Fore.YELLOW}{next_time} UTC{Style.RESET_ALL}", "INFO")
-                wait_time = (next_at / 1000) - time.time()
-                if wait_time > 0:
-                    total_wait_times.append(wait_time)
-
-        if execute_tasks:
-            tasks = fetch_tasks(token)
-            if tasks:
-                for task in tasks:
-                    log(f"Processing task {task['id']} for Token {idx + 1}...", "INFO")
-                    execute_task(token, task)
-
-    if total_wait_times:
-        next_wait_time = max(0, min(total_wait_times))
-        next_wait_time_human = to_utc(time.time() + next_wait_time)
-        log(f"All sessions processed. Next action in {Fore.YELLOW}{next_wait_time:.2f} seconds{Style.RESET_ALL}, at {Fore.YELLOW}{next_wait_time_human} UTC{Style.RESET_ALL}.", "INFO")
-        dynamic_countdown(int(next_wait_time))
-        process_sessions(file, execute_tasks, retry=True)
-    elif retry:
-        log("Retrying to process tasks that were in-progress.", "INFO")
-        process_sessions(file, execute_tasks, retry=False)
-    else:
-        log("All sessions processed. No further actions required.", "SUCCESS")
-
-def process_sessions(file, execute_tasks, retry=False):
     try:
         sessions = read_sessions(file)
         if not sessions:
