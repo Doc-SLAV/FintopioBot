@@ -33,7 +33,7 @@ Before you begin, make sure you have the following installed:
 ```
 
 ## Installation
-You can download the [**repository**](https://github.com/Doc-SLAV/FintopioBot/archive/refs/heads/rel.zip) by cloning it to your system and installing the necessary dependencies:
+You can download the [**repository**](https://github.com/Doc-SLAV/FintopioBot/archive/refs/heads/main.zip) by cloning it to your system and installing the necessary dependencies:
 
 # Linux manual installation
 ```shell
