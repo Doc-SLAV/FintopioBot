@@ -287,7 +287,7 @@ if __name__ == "__main__":
 
         # Continuously process sessions and wait
         while True:
-            process_sessions("queries-*.txt", execute_tasks)
+            process_sessions("sessions.txt", execute_tasks)
             
             # Run the countdown function asynchronously
             asyncio.run(countdown(duration_between_runs))
