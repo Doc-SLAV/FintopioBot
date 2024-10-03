@@ -1,4 +1,6 @@
-
+# test_your_code.py
+def test_sample():
+    assert 1 + 1 == 2
 import requests
 import time
 from colorama import Fore, Style, init
