@@ -302,7 +302,7 @@ async def main():
 
 if __name__ == "__main__":
     try:
-        duration_between_runs = 3600  # Duration in seconds (1 hour)
+        duration_between_runs = 1800  # Duration in seconds (1 hour)
         user_input = input(f"Do you want to execute tasks for all sessions? (y/n): ")
         execute_tasks = user_input.lower() == 'y'
 
