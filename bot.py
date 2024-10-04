@@ -1,13 +1,14 @@
-
 import requests
-import time
-from colorama import Fore, Style, init
-import json
+import aiohttp
+import httpx
 import asyncio
+import json
 import sys
+from colorama import Fore, Style, init
 
 init(autoreset=True)
 
+# Base API URL and endpoint constants
 BASE = "https://fintopio-tg.fintopio.com/api"
 AUTH_URL = f"{BASE}/auth/telegram"
 CHECKIN_URL = f"{BASE}/daily-checkins"
@@ -36,12 +37,27 @@ HEADERS = {
 # Color variables for console output
 RED, YELLOW, GREEN, CYAN, MAGENTA, RESET, BLUE = Fore.RED, Fore.YELLOW, Fore.GREEN, Fore.CYAN, Fore.MAGENTA, Style.RESET_ALL, Fore.BLUE
 
+RED = Fore.RED
+YELLOW = Fore.YELLOW
+GREEN = Fore.GREEN
+CYAN = Fore.CYAN
+MAGENTA = Fore.MAGENTA
+RESET = Style.RESET_ALL
+BLUE = Fore.BLUE
+
 def log(message, level="INFO"):
-    colors = {"ERROR": RED, "WARNING": YELLOW, "SUCCESS": GREEN, "INFO": CYAN, "DEBUG": BLUE}
+    colors = {
+        "ERROR": RED, 
+        "WARNING": YELLOW, 
+        "SUCCESS": GREEN, 
+        "INFO": CYAN, 
+        "DEBUG": Fore.CYAN
+    }
     color = colors.get(level, "")
     print(f"{color}[{level}] {message}{RESET}")
 
 def read_sessions(file):
+    """Reads session tokens from a specified file."""
     try:
         with open(file, 'r') as f:
             sessions = [line.strip() for line in f if line.strip()]
@@ -51,39 +67,48 @@ def read_sessions(file):
         log(f"File {file} not found.", "ERROR")
         return []
 
-def api_request(method, url, token=None, json_data=None):
-    hdr = {**HEADERS}
-    if token:
-        hdr["authorization"] = f"Bearer {token}"
-    
-    try:
-        response = requests.request(method, url, headers=hdr, json=json_data)
-        response.raise_for_status()  # Raise an error for bad responses
-        return response.json()
-    except requests.HTTPError as http_err:
-        log(f"HTTP error: {http_err}", "ERROR")
-    except Exception as err:
-        log(f"Error: {err}", "ERROR")
+async def api_request(method, url, token=None, json_data=None):
+    async with httpx.AsyncClient() as client:
+        headers = {**HEADERS}
+        if token:
+            headers["authorization"] = f"Bearer {token}"
+        if json_data is not None:
+            headers["Content-Type"] = "application/json"
+
+        try:
+            response = await client.request(method, url, headers=headers, json=json_data)
+            response.raise_for_status()  # Raise an error for bad responses
+            return response.json()
+        except httpx.HTTPStatusError as http_err:
+            log(f"HTTP error: {http_err}", "ERROR")
+        except Exception as err:
+            log(f"Error: {err}", "ERROR")
     return None
 
-def login(session):
+
+
+async def login(session):
+    """Logs in to the API using the session token."""
     url = f"{AUTH_URL}?{session}"
-    res = api_request("GET", url)
+    res = await api_request("GET", url)
     token = res.get("token") if res else None
     log("Login successful." if token else "Login failed.", "SUCCESS" if token else "ERROR")
     return token
 
-def check_in(token):
-    res = api_request("POST", CHECKIN_URL, token)
-    if res and "dailyReward" in res and not res.get("claimed", True):
-        log("Daily check-in successful.", "SUCCESS")
-    elif res:
-        log("Already checked in today.", "WARNING")
+async def check_in(token):
+    """Performs the daily check-in for the user."""
+    res = await api_request("POST", CHECKIN_URL, token)
+    if res:
+        if "dailyReward" in res and not res.get("claimed", True):
+            log("Daily check-in successful.", "SUCCESS")
+        else:
+            log("Already checked in today.", "WARNING")
     else:
-        log("Check-in already done or error.", "WARNING")
+        log("Check-in failed or already done.", "WARNING")
 
-def check_balance(token):
-    res = api_request("GET", BALANCE_URL, token)
+async def check_balance(token):
+    """Checks the user's account balance."""
+    res = await api_request("GET", BALANCE_URL, token)
     if res:
         username = res.get("profile", {}).get("telegramUsername", "Unknown")
         balance = res.get("balance", {}).get("balance", "0")
@@ -92,40 +117,38 @@ def check_balance(token):
     log("Failed to fetch balance.", "ERROR")
     return "0"
 
-def get_diamond_state(token):
+async def get_diamond_state(token):
+    """Fetches the diamond state from the API."""
     try:
         hdr = {**HEADERS, "authorization": f"Bearer {token}"}
-        response = requests.get(DIAMOND_STATE_URL, headers=hdr)
-        response.raise_for_status()  # Raise an error for bad responses
-        
-        diamond_data = response.json()  # Get the JSON response
+        async with aiohttp.ClientSession() as session:
+            async with session.get(DIAMOND_STATE_URL, headers=hdr) as response:
+                response.raise_for_status()  # Raise an error for bad responses
+                diamond_data = await response.json()  # Get the JSON response
 
-        # Safely extract hold_amount and gem_name
-        hold_amount = diamond_data.get("rewards", {}).get("hold", {}).get("amount", "N/A")
-        gem_name = diamond_data.get("rewards", {}).get("gem", {}).get("name", "N/A")
+                # Safely extract hold_amount and gem_name
+                hold_amount = diamond_data.get("rewards", {}).get("hold", {}).get("amount", "N/A")
+                gem_name = diamond_data.get("rewards", {}).get("gem", {}).get("name", "N/A")
 
-        # Log the values correctly after extracting them
-        log(f"Diamond state fetched successfully: Hold Amount: {hold_amount} HOLD, Gem Name: {gem_name}", "INFO")
-        
-        return diamond_data  # Return the whole diamond data for further processing
-    except requests.HTTPError as http_err:
-        log(f"HTTP error occurred: {http_err}", "ERROR")
+                # Log the values correctly after extracting them
+                log(f"Diamond state fetched successfully: Hold Amount: {hold_amount} HOLD, Gem Name: {gem_name}", "INFO")
+                return diamond_data  # Return the whole diamond data for further processing
     except Exception as e:
         log(f"Error getting diamond state: {str(e)}", "ERROR")
     return {}
 
-def complete_diamond(token, diamond_num):
+async def complete_diamond(token, diamond_num):
+    """Completes a diamond task."""
     try:
         hdr = {**HEADERS, "authorization": f"Bearer {token}", "content-type": "application/json"}
-        res = requests.post(DIAMOND_COMPLETE_URL, headers=hdr, json={"diamondNumber": diamond_num})
-
+        res = await api_request("POST", DIAMOND_COMPLETE_URL, token, json={"diamondNumber": diamond_num})
         log(f"Diamond complete response: {res.status_code} - {res.text}", "DEBUG")
 
-        if res.status_code == 200:
+        if res:
             log("Diamond completed successfully.", "SUCCESS")
-            return res.json()  # Safely parse JSON response
+            return res  # Safely parse JSON response
         else:
-            log(f"Failed to complete diamond. Status Code: {res.status_code}, Response: {res.text}", "ERROR")
+            log(f"Failed to complete diamond.", "ERROR")
             return {}
     except Exception as e:
         log(f"Error during diamond completion: {str(e)}", "ERROR")
@@ -139,54 +162,56 @@ def format_time(ms):
     seconds = total_seconds % 60
     return f"{hours:02}:{minutes:02}:{seconds:02}"
 
-def get_farming_state(token):
+async def get_farming_state(token):
+    """Checks the current farming state."""
     try:
-        hdr = {**HEADERS, "authorization": f"Bearer {token}"}
-        res = requests.get(FARM_STATE_URL, headers=hdr)
-        if res.status_code == 200:
-            res_data = res.json()
-            state = res_data.get("state", "")
-            farmed_amount = res_data.get("farmed", 0)
+        res = await api_request("GET", FARM_STATE_URL, token)
+        if res:
+            state = res.get("state", "")
+            farmed_amount = res.get("farmed", 0)
             if state == "farmed":
                 log(f"Farming completed. Farmed amount: {GREEN}{farmed_amount}{RESET}", "INFO")
-                return "farmed", res_data
+                return "farmed", res
             elif state == "farming":
-                left_time = res_data.get("timings", {}).get("left", 0)
+                left_time = res.get("timings", {}).get("left", 0)
                 formatted_time = format_time(left_time)
                 log(f"Farming is in progress. Time left: {YELLOW}{formatted_time}{RESET}", "INFO")
-                return "farming", res_data
+                return "farming", res
             else:
                 log("Farming state is idling or unknown.", "WARNING")
-                return "idling", res_data
+                return "idling", res
         else:
-            log(f"Failed to check farming state. Status Code: {res.status_code}", "ERROR")
+            log(f"Failed to check farming state.", "ERROR")
             return "error", {}
     except Exception as e:
-        log(f"Already claimed Gem.", "WARNING")
+        log(f"Error checking farming state: {str(e)}", "ERROR")
         return {}
 
-def claim_farming(token):
+async def claim_farming(token):
     try:
-        hdr = {**HEADERS, "authorization": f"Bearer {token}"}
-        res = requests.post(CLAIM_FARM_URL, headers=hdr)
+        log(f"Attempting to claim farming rewards with token: {token}", "DEBUG")
+        res = await api_request("POST", CLAIM_FARM_URL, token)
 
-        if res.status_code == 200:
-            log("Farming reward claimed successfully.", "SUCCESS")
+        if res:
+            if res.get("success"):
+                log("Farming reward claimed successfully.", "SUCCESS")
+            else:
+                log(f"Failed to claim farming rewards: {res.get('message', 'No message provided')}", "ERROR")
         else:
-            log("Already claimed Farm.", "INFO")
+            log("Response was None or invalid.", "ERROR")
+    except httpx.HTTPStatusError as http_err:
+        log(f"HTTP error: {http_err}", "ERROR")
     except Exception as e:
-        log("Farming rewards management failed.", "INFO")
+        log(f"An error occurred during farming rewards management: {str(e)}", "ERROR")
 
-
-def execute_task(token, task):
+async def execute_task(token, task):
     task_id = task["id"]
     status = task.get("status")
-    
+
     if status == "available":
         log(f"Executing task {task_id}...", "INFO")
-        # Assuming there's an endpoint to execute the task
-        response = api_request("POST", f"{TASKS_URL}/{task_id}/execute", token)
-        
+        response = await api_request("POST", f"{TASKS_URL}/{task_id}/execute", token)
+
         if response:
             log(f"Task {task_id} executed successfully.", "SUCCESS")
         else:
@@ -194,90 +219,86 @@ def execute_task(token, task):
     
     elif status == "in-progress":
         log(f"Task {task_id} is already in-progress.", "WARNING")
-    else:
-        log(f"Task {task_id} status is unknown.", "ERROR")
+    
+    elif status == "verified":
+        log(f"Task {task_id} is already verified and does not require execution.", "INFO")
 
-def fetch_tasks(token):
-    res = api_request("GET", TASKS_URL, token)
+    else:
+        log(f"Task {task_id} has an unknown status: {status}. Please check the API documentation.", "ERROR")
+
+
+async def fetch_tasks(token):
+    res = await api_request("GET", TASKS_URL, token)
     if res and "tasks" in res:
         log(f"Found {len(res['tasks'])} available tasks.", "INFO")
         for task in res['tasks']:
             log(f"Task ID: {task['id']}, Status: {task.get('status')}", "DEBUG")
         return res["tasks"]
-    log("Failed to fetch tasks or no tasks available.", "WARNING")
+    else:
+        log("Failed to fetch tasks or no tasks available.", "WARNING")
     return []
 
+async def process_sessions(file, execute_tasks):
+    sessions = read_sessions(file)
+    if not sessions:
+        log("No sessions to process.", "ERROR")
+        return
 
-def process_sessions(file, execute_tasks):
-    try:
-        sessions = read_sessions(file)
-        if not sessions:
-            return
-        
-        for idx, session in enumerate(sessions):
-            log(f"Processing session: Token {CYAN}{idx + 1}{RESET}", "INFO")
-            
-            token = login(session)
-            if not token:
-                continue
-            
-            try:
-                # Process the session: Check in, balance, diamond state, farming, and tasks
-                check_in(token)
-                
-                # Fetch diamond state within the session context
-                diamond_state = get_diamond_state(token)
+    total_wait_times = []
+    for idx, session in enumerate(sessions):
+        log(f"Processing session: Token {CYAN}{idx + 1}{RESET}", "INFO")
+        token = await login(session)  # Await the login function
+        if not token:
+            log(f"Skipping session Token {idx + 1} due to login failure.", "WARNING")
+            continue
 
-                # Safely access rewards
-                if diamond_state and "rewards" in diamond_state:
-                    hold_amount = diamond_state["rewards"].get("hold", {}).get("amount", "N/A")
-                    gem_name = diamond_state["rewards"].get("gem", {}).get("name", "N/A")
-                    log(f"Hold Amount: {hold_amount}, Gem Name: {gem_name}", "INFO")
-                else:
-                    log("No rewards data found in diamond state.", "WARNING")
+        await check_in(token)
+        balance = await check_balance(token)  # Ensure you await here
+        log(f"Current balance for Token {idx + 1}: {balance} HOLD", "INFO")
 
-                log(f"Starting farming check...", "INFO")
-                claim_farming(token)
-                
-                if execute_tasks:
-                    tasks = fetch_tasks(token)
-                    if tasks:
-                        for task in tasks:
-                            execute_task(token, task)
-            
-            except Exception as session_error:
-                log(f"Error while processing session Token {CYAN}{idx + 1}{RESET}: {session_error}", "ERROR")
+        diamond_state = await get_diamond_state(token)
 
-        log("All sessions processed.", "SUCCESS")
+        if diamond_state and "rewards" in diamond_state:
+            hold_amount = diamond_state["rewards"].get("hold", {}).get("amount", "N/A")
+            gem_name = diamond_state["rewards"].get("gem", {}).get("name", "N/A")
+            log(f"Hold Amount: {hold_amount}, Gem Name: {gem_name}", "INFO")
+        else:
+            log("No rewards data found in diamond state.", "WARNING")
 
-    except KeyboardInterrupt:
-        log("Process interrupted by user. Exiting session processing.", "WARNING")
-        sys.exit(0)  # Exit the entire script immediately
+        log(f"Starting farming check...", "INFO")
+        farming_state, farming_data = await get_farming_state(token)
 
-    except Exception as e:
-        log(f"Unexpected error occurred: {str(e)}", "ERROR")
+        if farming_state == "farmed":
+            await claim_farming(token)
+        else:
+            log(f"Cannot claim farming rewards yet. Current state: {farming_state}.", "WARNING")
 
-async def countdown(t):
-    try:
-        for i in range(t, 0, -1):
-            minute, seconds = divmod(i, 60)
-            hour, minute = divmod(minute, 60)
-            seconds = str(seconds).zfill(2)
-            minute = str(minute).zfill(2)
-            hour = str(hour).zfill(2)
+        if execute_tasks:
+            tasks = await fetch_tasks(token)
+            if tasks:
+                for task in tasks:
+                    await execute_task(token, task)
 
-            # Use sys.stdout.write to display countdown on same line
-            sys.stdout.write(f"Waiting for {hour}:{minute}:{seconds} remaining...\r")
-            sys.stdout.flush()  # Ensure the output is written immediately
+    log("All sessions processed.", "SUCCESS")
 
-            # Asynchronous sleep
-            await asyncio.sleep(1)
-        log("Countdown complete! Proceeding with next session.", "SUCCESS")
 
-    except KeyboardInterrupt:
-        log("Countdown interrupted by user.", "WARNING")
-        sys.exit(0)
 
+async def countdown(seconds):
+    """Countdown function to wait for the given number of seconds."""
+    while seconds:
+        mins, secs = divmod(seconds, 60)
+        timer = f"{mins:02}:{secs:02}"
+        print(timer, end="\r")
+        await asyncio.sleep(1)
+        seconds -= 1
+    print("Time's up!")
+
+async def main():
+    """Main function to execute the processing of sessions."""
+    # Continuously process sessions and wait
+    while True:
+        await process_sessions("queries-*.txt", execute_tasks)
+        await countdown(duration_between_runs)
 
 if __name__ == "__main__":
     try:
@@ -285,12 +306,6 @@ if __name__ == "__main__":
         user_input = input(f"Do you want to execute tasks for all sessions? (y/n): ")
         execute_tasks = user_input.lower() == 'y'
 
-        # Continuously process sessions and wait
-        while True:
-            process_sessions("sessions.txt", execute_tasks)
-            
-            # Run the countdown function asynchronously
-            asyncio.run(countdown(duration_between_runs))
-
+        asyncio.run(main())
     except KeyboardInterrupt:
         log("Script interrupted by user. Exiting gracefully...", "WARNING")
