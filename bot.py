@@ -7,26 +7,7 @@ import sys
 from colorama import Fore, Style, init
 
 init(autoreset=True)
-bot_token = ""
-chat_id = ""
 
-def send_telegram_message(bot_token, chat_id, message):
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": message,
-        "parse_mode": "HTML"
-    }
-    try:
-        response = requests.post(url, json=payload)
-        if response.status_code == 200:
-            print(f"{Fore.GREEN+Style.BRIGHT}Notification sent successfully.")
-        else:
-            print(f"{Fore.RED+Style.BRIGHT}Failed to send notification. Status code: {response.status_code}")
-    except Exception as e:
-        print(f"{Fore.RED+Style.BRIGHT}Error sending notification: {str(e)}")
-
-total_balance_all_accounts = 0  # Initialize total balance variable
 # Base API URL and endpoint constants
 BASE = "https://fintopio-tg.fintopio.com/api"
 AUTH_URL = f"{BASE}/auth/telegram"
@@ -132,11 +113,6 @@ async def check_balance(token):
         username = res.get("profile", {}).get("telegramUsername", "Unknown")
         balance = res.get("balance", {}).get("balance", "0")
         log(f"Account: {GREEN}{username}{RESET}, Balance: {GREEN}{balance} HOLD{RESET}", "INFO")
-        
-        # Update total balance
-        global total_balance_all_accounts
-        total_balance_all_accounts += float(balance)  # Assuming balance is numeric
-        
         return balance
     log("Failed to fetch balance.", "ERROR")
     return "0"
@@ -262,27 +238,23 @@ async def fetch_tasks(token):
         log("Failed to fetch tasks or no tasks available.", "WARNING")
     return []
 
-async def process_sessions(file, execute_tasks, notify_enable):
-    global total_balance_all_accounts  # Ensure this is global to modify it
+async def process_sessions(file, execute_tasks):
     sessions = read_sessions(file)
     if not sessions:
         log("No sessions to process.", "ERROR")
         return
 
-    total_balance_all_accounts = 0  # Initialize total balance variable
-
+    total_wait_times = []
     for idx, session in enumerate(sessions):
         log(f"Processing session: Token {CYAN}{idx + 1}{RESET}", "INFO")
-        token = await login(session)
+        token = await login(session)  # Await the login function
         if not token:
             log(f"Skipping session Token {idx + 1} due to login failure.", "WARNING")
             continue
 
         await check_in(token)
-        balance = await check_balance(token)
+        balance = await check_balance(token)  # Ensure you await here
         log(f"Current balance for Token {idx + 1}: {balance} HOLD", "INFO")
-
-        total_balance_all_accounts += float(balance)  # Update total balance
 
         diamond_state = await get_diamond_state(token)
 
@@ -309,20 +281,7 @@ async def process_sessions(file, execute_tasks, notify_enable):
 
     log("All sessions processed.", "SUCCESS")
 
-    # Send notification after processing all sessions, if needed
-    if notify_input.lower() == 'y':
-        if total_balance_all_accounts > 0:  # Only send if the total balance is positive
-            message = f"""          
-                    🍀 <b>FINTOPIO Report</b>
 
-            📁 <b>Total Accounts:</b> {len(sessions)}
-            💰 <b>Total Balance:</b> {total_balance_all_accounts:,.2f} HOLD
-
-
-            == Akademi Pengemis Team ==
-            """
-            await asyncio.sleep(5)  # Add a delay of 5 seconds before sending the notification
-            send_telegram_message(bot_token, chat_id, message)
 
 async def countdown(seconds):
     """Countdown function to wait for the given number of seconds."""
@@ -338,7 +297,7 @@ async def main():
     """Main function to execute the processing of sessions."""
     # Continuously process sessions and wait
     while True:
-        await process_sessions("sessions.txt", execute_tasks, notify_enable)  # Pass the notify_enable variable
+        await process_sessions("sessions.txt", execute_tasks)
         await countdown(duration_between_runs)
 
 if __name__ == "__main__":
@@ -346,9 +305,6 @@ if __name__ == "__main__":
         duration_between_runs = 1800  # Duration in seconds (1 hour)
         user_input = input(f"Do you want to execute tasks for all sessions? (y/n): ")
         execute_tasks = user_input.lower() == 'y'
-        
-        notify_input = input("Do you want to send notify on Telegram? (y/n): ")
-        notify_enable = notify_input.lower() == 'y'  # Updated line to store notification preference
 
         asyncio.run(main())
     except KeyboardInterrupt:
