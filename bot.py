@@ -297,7 +297,7 @@ async def main():
     """Main function to execute the processing of sessions."""
     # Continuously process sessions and wait
     while True:
-        await process_sessions("queries-*.txt", execute_tasks)
+        await process_sessions("sessions.txt", execute_tasks)
         await countdown(duration_between_runs)
 
 if __name__ == "__main__":
