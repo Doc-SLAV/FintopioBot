@@ -1,3 +1,5 @@
-colorama
 requests
+aiohttp
+httpx
 asyncio
+colorama
